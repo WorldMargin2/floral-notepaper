@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -15,6 +14,7 @@ import type { AppConfig, ViewMode } from "../features/settings/types";
 import { normalizeTileColor } from "../features/settings/tileColor";
 import { SettingsPanel } from "./SettingsPanel";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
+import { UndoManager } from "./Undo";
 import {
   createNote,
   createCategory,
@@ -82,9 +82,53 @@ type FormatAction =
   | "ul"
   | "ol"
   | "code"
+  | "indent"
+  | "outdent"
   | "quote"
   | "inlineMath"
   | "blockMath";
+
+interface indentResult {
+  result: string;
+  firstLineIdentBlankCount: number;
+}
+
+function indentText(lines: string[], indent: string): indentResult {
+  let firstLineIdentBlankCount = indentLine(lines[0], indent).length - lines[0].length;
+  return {
+    result: lines.map((line) => indentLine(line, indent)).join("\n"),
+    firstLineIdentBlankCount,
+  };
+}
+
+function indentLine(line: string, indent: string) {
+  let blankCount = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] == " ") {
+      blankCount++;
+    } else {
+      break;
+    }
+  }
+  let nowLevel = blankCount / indent.length;
+  return indent.repeat(nowLevel + 1) + line.slice(blankCount);
+}
+
+function outdentText(lines: string[], indent: string): indentResult {
+  let firstLineIdentBlankCount = outdentLine(lines[0], indent).length - lines[0].length;
+  return {
+    result: lines.map((line) => outdentLine(line, indent)).join("\n"),
+    firstLineIdentBlankCount,
+  };
+}
+
+function outdentLine(line: string, indent: string) {
+  let nowLevel = line.indexOf(indent);
+  if (nowLevel == -1) {
+    return line;
+  }
+  return line.slice(nowLevel + indent.length);
+}
 
 function applyFormat(
   textarea: HTMLTextAreaElement,
@@ -92,6 +136,7 @@ function applyFormat(
   translate: TFunction,
   setContent: (v: string) => void,
   markDirty: () => void,
+  undoManager?: UndoManager,
 ) {
   const { selectionStart: start, selectionEnd: end, value } = textarea;
   const selected = value.slice(start, end);
@@ -104,6 +149,7 @@ function applyFormat(
   let result: string;
   let cursorStart: number;
   let cursorEnd: number;
+  let indent = "    ";
 
   switch (action) {
     case "bold": {
@@ -240,6 +286,78 @@ function applyFormat(
       cursorEnd = cursorStart + (selected || "x^2 + y^2 = r^2").length;
       break;
     }
+    case "indent": {
+      if (selected === "") {
+        if (start === lineStart) {
+          let identedLine = indentLine(currentLine, indent);
+          let indentBlankCount = identedLine.length - currentLine.length;
+          result = before + identedLine + after;
+          cursorStart = start + indentBlankCount;
+        } else {
+          let identedLine = indentLine(currentLine, indent);
+          let indentBlankCount = identedLine.length - currentLine.length;
+          result = before.slice(0, lineStart) + identedLine + after;
+          cursorStart = start + indentBlankCount;
+        }
+        cursorEnd = cursorStart;
+        break;
+      }
+      if (selected.startsWith("\n")) {
+        let tmp_result = indentText(selected.split("\n"), indent);
+        let tmp_selected = tmp_result.result;
+        result = before + tmp_selected + after;
+        cursorStart = start + tmp_result.firstLineIdentBlankCount;
+        cursorEnd = cursorStart + tmp_selected.length - tmp_result.firstLineIdentBlankCount;
+      } else {
+        let tmp_lines = selected.split("\n");
+        tmp_lines[0] = currentLine + tmp_lines[0];
+        let tmp_indent = indentText(tmp_lines, indent);
+        let indentBlankCount = tmp_indent.firstLineIdentBlankCount;
+        let tmp_selected = tmp_indent.result;
+        result = before.slice(0, lineStart) + tmp_selected + after;
+        cursorStart = start + indentBlankCount;
+        cursorEnd = cursorStart + tmp_selected.length - indentBlankCount - currentLine.length;
+      }
+      break;
+    }
+    case "outdent": {
+      if (selected === "") {
+        if (start === lineStart) {
+          let outdentBlankCount = outdentLine(currentLine, indent).length - currentLine.length;
+          result = before.slice(0, lineStart) + indent + after;
+          cursorStart = start + outdentBlankCount;
+          cursorEnd = cursorStart;
+        } else {
+          let outdentedLine = outdentLine(currentLine, indent);
+          let outdentBlankCount = outdentedLine.length - currentLine.length;
+          result = before.slice(0, lineStart) + outdentedLine + after;
+          cursorStart = start + outdentBlankCount;
+          cursorEnd = cursorStart;
+        }
+        break;
+      }
+      if (selected.startsWith("\n")) {
+        let tmp_result = outdentText(selected.split("\n"), indent);
+        let tmp_selected = tmp_result.result;
+        result = before + tmp_selected + after;
+        cursorStart = start + tmp_result.firstLineIdentBlankCount;
+        cursorEnd = cursorStart + tmp_selected.length - tmp_result.firstLineIdentBlankCount;
+      } else {
+        let tmp_lines = selected.split("\n");
+        tmp_lines[0] = currentLine + tmp_lines[0];
+        let tmp_outdent = outdentText(tmp_lines, indent);
+        let outdentBlankCount = tmp_outdent.firstLineIdentBlankCount;
+        let tmp_selected = tmp_outdent.result;
+        result = before.slice(0, lineStart) + tmp_selected + after;
+        cursorStart = start + outdentBlankCount;
+        cursorEnd = cursorStart + tmp_selected.length - outdentBlankCount - currentLine.length;
+      }
+      break;
+    }
+  }
+
+  if (undoManager) {
+    undoManager.addByValue(result);
   }
 
   setContent(result);
@@ -320,6 +438,7 @@ export function MainWindow({
   const [categoryMenuClosing, setCategoryMenuClosing] = useState(false);
   const [categoryMenuConfirmDelete, setCategoryMenuConfirmDelete] = useState(false);
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const undoManagerRef = useRef<UndoManager>(new UndoManager());
   const externalFileMtimeRef = useRef<number>(0);
   const lastExternalSaveRef = useRef<number>(0);
   const saveStateRef = useRef(saveState);
@@ -462,6 +581,9 @@ export function MainWindow({
     setSaveState("saved");
     setErrorMessage(null);
     setNoteTransitionKey((k) => k + 1);
+    const undoManager = undoManagerRef.current;
+    undoManager.text = note.content;
+    undoManager.reset();
   }, []);
 
   const replaceNoteMetadata = useCallback((note: Note) => {
@@ -675,24 +797,6 @@ export function MainWindow({
 
     return () => window.clearInterval(interval);
   }, [selectedExternalFile]);
-
-  useEffect(() => {
-    function closeMenus() {
-      setNoteMenuClosing(true);
-      setCategoryMenuClosing(true);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") closeMenus();
-    }
-
-    document.addEventListener("mousedown", closeMenus);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", closeMenus);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, []);
 
   useEffect(() => {
     if (!noteMenuClosing || !noteMenu) return;
@@ -953,6 +1057,7 @@ export function MainWindow({
 
   const handleRemoveExternalFile = async (id: string) => {
     if (selectedId === id && saveState === "dirty") {
+      if (typeof window === "undefined") return;
       const shouldSave = window.confirm(
         t("main.confirm.unsavedExternalFile", {
           title: title || t("common.untitledFile", { defaultValue: "未命名文件" }),
@@ -988,14 +1093,16 @@ export function MainWindow({
     }
   };
 
-  const handleOpenNoteMenu = (event: MouseEvent<HTMLElement>, noteId: string) => {
+  const handleOpenNoteMenu = (event: React.MouseEvent<HTMLElement>, noteId: string) => {
     event.preventDefault();
     event.stopPropagation();
 
     const menuWidth = 168;
     const menuHeight = 76;
-    const x = Math.min(event.clientX, window.innerWidth - menuWidth - 4);
-    const y = Math.min(event.clientY, window.innerHeight - menuHeight - 4);
+    const screenWidth = typeof window !== "undefined" ? window.innerWidth : 1920;
+    const screenHeight = typeof window !== "undefined" ? window.innerHeight : 1080;
+    const x = Math.min(event.clientX, screenWidth - menuWidth - 4);
+    const y = Math.min(event.clientY, screenHeight - menuHeight - 4);
 
     setNoteMenuClosing(false);
     setHoveredId(noteId);
@@ -1116,14 +1223,90 @@ export function MainWindow({
     if (selectedId) setSaveState("dirty");
   };
 
-  const handleUndo = () => {
+  const handleUndo = useCallback(() => {
     if (!selectedId) return;
+    const undoManager = undoManagerRef.current;
+    const result = undoManager.undo();
+    console.log("Undo result:", result);
     const textarea = contentRef.current;
-    if (runEditorUndo(textarea)) {
-      setContent(textarea?.value ?? content);
+    if (textarea) {
+      const startPos = result.selectionStart ?? 0;
+      const endPos = result.selectionEnd ?? 0;
+      textarea.value = undoManager.text;
+      textarea.focus();
+      textarea.setSelectionRange(startPos, endPos);
+      setContent(undoManager.text);
+      markDirty();
+    } else {
+      setContent(undoManager.text);
+      console.log("failed to undo steps");
       markDirty();
     }
-  };
+  }, [selectedId]);
+
+  const handleRedo = useCallback(() => {
+    if (!selectedId) return;
+    const undoManager = undoManagerRef.current;
+    const result = undoManager.redo();
+    const textarea = contentRef.current;
+    if (textarea) {
+      const startPos = result.selectionStart ?? 0;
+      const endPos = result.selectionEnd ?? 0;
+      textarea.value = undoManager.text;
+      textarea.focus();
+      textarea.setSelectionRange(startPos, endPos);
+      setContent(undoManager.text);
+      markDirty();
+    } else {
+      setContent(undoManager.text);
+      markDirty();
+    }
+  }, [selectedId]);
+
+  // Save selection range before input for undo tracking
+  const prevSelectionRef = useRef<{ start: number; end: number } | null>(null);
+
+  const handleBeforeInput = useCallback(() => {
+    const textarea = contentRef.current;
+    if (textarea) {
+      prevSelectionRef.current = {
+        start: textarea.selectionStart,
+        end: textarea.selectionEnd,
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    function closeMenus() {
+      setNoteMenuClosing(true);
+      setCategoryMenuClosing(true);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeMenus();
+
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const ctrlOrCmd = isMac ? event.metaKey : event.ctrlKey;
+
+      if (ctrlOrCmd && event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        handleUndo();
+      } else if (
+        ctrlOrCmd &&
+        (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))
+      ) {
+        event.preventDefault();
+        handleRedo();
+      }
+    }
+
+    document.addEventListener("mousedown", closeMenus);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", closeMenus);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleUndo, handleRedo]);
 
   const handleOpenNotepad = async () => {
     setErrorMessage(null);
@@ -1207,7 +1390,7 @@ export function MainWindow({
 
   const selectedTilePinned = selectedId ? pinnedTileIds.has(selectedId) : false;
 
-  const handleTitleBarDrag = (event: MouseEvent<HTMLDivElement>) => {
+  const handleTitleBarDrag = (event: React.MouseEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest("button")) return;
     void startCurrentWindowDrag().catch(() => undefined);
   };
@@ -1216,7 +1399,7 @@ export function MainWindow({
     void toggleMaximizeCurrentWindow().then(() => isCurrentWindowMaximized().then(setIsMaximized));
   };
 
-  const handleTitleBarDoubleClick = (event: MouseEvent<HTMLDivElement>) => {
+  const handleTitleBarDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest("button")) return;
     toggleMaximize();
   };
@@ -1947,6 +2130,7 @@ export function MainWindow({
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                   title={t("main.editor.undo", { defaultValue: "撤销（Ctrl+Z）" })}
                   aria-label={t("main.editor.undoLabel", { defaultValue: "撤销" })}
+                  style={{ opacity: undoManagerRef.current.canUndo ? 1 : 0.5 }}
                 >
                   <svg
                     data-testid="main-editor-undo-icon"
@@ -1959,6 +2143,36 @@ export function MainWindow({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     aria-hidden="true"
+                  >
+                    <path d="M9 14 4 9l5-5" />
+                    <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
+                  </svg>
+                </button>
+
+                <button
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={handleRedo}
+                  disabled={!selectedId}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                  title={t("main.editor.redo", { defaultValue: "重做（Ctrl+Y）" })}
+                  aria-label={t("main.editor.redoLabel", { defaultValue: "重做" })}
+                >
+                  <svg
+                    data-testid="main-editor-redo-icon"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    style={{
+                      transform: "scaleX(-1)",
+                      opacity: undoManagerRef.current.canRedo ? 1 : 0.5,
+                    }}
+                    //懒得做，直接水平反向撤回按钮
                   >
                     <path d="M9 14 4 9l5-5" />
                     <path d="M4 9h10a6 6 0 0 1 0 12h-1" />
@@ -2115,12 +2329,14 @@ export function MainWindow({
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => {
                               if (contentRef.current) {
+                                const undoManager = undoManagerRef.current;
                                 applyFormat(
                                   contentRef.current,
                                   button.action,
                                   t,
                                   setContent,
                                   markDirty,
+                                  undoManager,
                                 );
                               }
                             }}
@@ -2135,9 +2351,42 @@ export function MainWindow({
                         <textarea
                           ref={contentRef}
                           value={content}
+                          onBeforeInput={handleBeforeInput}
                           onChange={(event) => {
+                            undoManagerRef.current.addByValue(event.target.value);
                             setContent(event.target.value);
                             markDirty();
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Tab" && !e.shiftKey) {
+                              e.preventDefault();
+                              //缩进
+                              if (contentRef.current) {
+                                const undoManager = undoManagerRef.current;
+                                applyFormat(
+                                  contentRef.current,
+                                  "indent",
+                                  t,
+                                  setContent,
+                                  markDirty,
+                                  undoManager,
+                                );
+                              }
+                            } else if (e.key === "Tab" && e.shiftKey) {
+                              e.preventDefault();
+                              //取消缩进
+                              if (contentRef.current) {
+                                const undoManager = undoManagerRef.current;
+                                applyFormat(
+                                  contentRef.current,
+                                  "outdent",
+                                  t,
+                                  setContent,
+                                  markDirty,
+                                  undoManager,
+                                );
+                              }
+                            }
                           }}
                           className="w-full h-full leading-[1.9] text-ink-soft font-body placeholder:text-ink-ghost/40"
                           style={{ fontSize: `${settingsConfig?.fontSize ?? 14}px` }}

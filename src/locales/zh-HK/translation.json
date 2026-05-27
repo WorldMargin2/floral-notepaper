@@ -67,7 +67,9 @@
       "pinToTile": "釘為磁貼",
       "previewLabel": "預覽",
       "undo": "還原（Ctrl+Z）",
-      "undoLabel": "還原"
+      "redo": "重做（Ctrl+Y）",
+      "undoLabel": "還原",
+      "redoLabel": "重做"
     },
     "externalFile": {
       "label": "外部檔案 · {{path}}"
