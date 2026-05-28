@@ -950,11 +950,13 @@ fn notepad_window_specs() -> WindowSizeSpec {
 
 #[cfg(target_os = "windows")]
 fn cursor_centered_bounds(specs: &WindowSizeSpec) -> Option<WindowBounds> {
+    #[allow(clippy::upper_case_acronyms)]
     #[repr(C)]
     struct POINT {
         x: i32,
         y: i32,
     }
+    #[allow(clippy::upper_case_acronyms)]
     #[repr(C)]
     struct RECT {
         left: i32,
@@ -962,6 +964,7 @@ fn cursor_centered_bounds(specs: &WindowSizeSpec) -> Option<WindowBounds> {
         right: i32,
         bottom: i32,
     }
+    #[allow(clippy::upper_case_acronyms)]
     #[repr(C)]
     struct MONITORINFO {
         cb_size: u32,
@@ -969,6 +972,7 @@ fn cursor_centered_bounds(specs: &WindowSizeSpec) -> Option<WindowBounds> {
         rc_work: RECT,
         dw_flags: u32,
     }
+    #[allow(clippy::upper_case_acronyms)]
     type HMONITOR = isize;
     const MONITOR_DEFAULTTONEAREST: u32 = 2;
     extern "system" {
