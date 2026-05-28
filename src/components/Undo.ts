@@ -15,6 +15,15 @@ export class UndoManager {
   private steps: Step[] = [];
   private index = -1;
   text = "";
+
+  private _enabled = true;
+  set enabled(value: boolean) {
+    this._enabled = value;
+  }
+  get enabled() {
+    return this._enabled;
+  }
+
   //用于设置按钮的状态
   get canUndo() {
     return this.index >= 0;
@@ -23,7 +32,7 @@ export class UndoManager {
     return this.index < this.steps.length - 1;
   }
   undo(): UndoResult {
-    if (this.index < 0) return { delta: 0, selectionStart: 0, selectionEnd: 0 };
+    if (this.index < 0 || !this._enabled) return { delta: 0, selectionStart: 0, selectionEnd: 0 };
     const step = this.steps[this.index];
     this.text =
       this.text.slice(0, step.range[0]) +
@@ -39,7 +48,7 @@ export class UndoManager {
   }
 
   redo(): UndoResult {
-    if (this.index >= this.steps.length - 1)
+    if (this.index >= this.steps.length - 1 || !this._enabled)
       return { delta: 0, selectionStart: 0, selectionEnd: 0 };
     const step = this.steps[++this.index];
 
@@ -57,6 +66,7 @@ export class UndoManager {
   }
 
   addByValue(newValue: string): void {
+    if (!this._enabled) return;
     const normalizedValue = newValue.replace("\r\n", "\n"); //解决因为换行符变化导致意外的结果
 
     if (this.text === normalizedValue) return;

@@ -132,7 +132,7 @@ export function NotePad({
   const [isExiting, setIsExiting] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
-  const isStandby = useRef(
+  const isStandby = useRef<boolean>(
     typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("standby") === "1",
   );

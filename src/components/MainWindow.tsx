@@ -2357,6 +2357,15 @@ export function MainWindow({
                             setContent(event.target.value);
                             markDirty();
                           }}
+                          onCompositionStart={() => {
+                            undoManagerRef.current.enabled = false;
+                          }}
+                          onCompositionEnd={(
+                            event: React.CompositionEvent<HTMLTextAreaElement>,
+                          ) => {
+                            undoManagerRef.current.enabled = true;
+                            undoManagerRef.current.addByValue(event.currentTarget.value);
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === "Tab" && !e.shiftKey) {
                               e.preventDefault();
