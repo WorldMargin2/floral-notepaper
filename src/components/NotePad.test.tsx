@@ -54,8 +54,9 @@ describe("NotePad surface modes", () => {
     expect(markup).not.toContain("cursor-grabbing");
     expect(markup).not.toContain("bg-bamboo-mist/70 p-2");
     expect(markup).not.toContain("<input");
-    expect(markup).not.toContain("<textarea");
     expect(markup).not.toContain(">保存<");
     expect(markup).toContain(">空<");
+    // Tile mode now has an invisible textarea for editing
+    expect(markup).toContain("<textarea");
   });
 });

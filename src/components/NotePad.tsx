@@ -47,6 +47,8 @@ import {
   tileSurfaceModeUnpinNoteId,
 } from "../features/windows/tileWindowEvents";
 import { Tile } from "./Tile";
+import { UndoManager } from "./Undo";
+import { handleIndent, handleOutdent } from "./indent";
 
 type OpenMode = "new" | "open";
 type NotePadStatus = "empty" | "opened" | "saved" | "dirty" | "saveFailed" | "copied";
@@ -132,6 +134,7 @@ export function NotePad({
   const [isExiting, setIsExiting] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
+  const undoManagerRef = useRef(new UndoManager());
   const isStandby = useRef<boolean>(
     typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("standby") === "1",
@@ -169,6 +172,9 @@ export function NotePad({
     setContent(note.content);
     setMode("new");
     setStatus("opened");
+    const undoManager = undoManagerRef.current;
+    undoManager.text = note.content;
+    undoManager.reset();
   }, []);
 
   useEffect(() => {
@@ -483,6 +489,49 @@ export function NotePad({
     setMode("new");
     setStatus("empty");
     setErrorMessage(null);
+    const undoManager = undoManagerRef.current;
+    undoManager.text = "";
+    undoManager.reset();
+  };
+
+  const handleUndo = useCallback(() => {
+    const undoManager = undoManagerRef.current;
+    const result = undoManager.undo();
+    const textarea = contentRef.current;
+    if (textarea) {
+      const startPos = result.selectionStart ?? 0;
+      const endPos = result.selectionEnd ?? 0;
+      textarea.value = undoManager.text;
+      textarea.focus();
+      textarea.setSelectionRange(startPos, endPos);
+      setContent(undoManager.text);
+      setStatus("dirty");
+    } else {
+      setContent(undoManager.text);
+      setStatus("dirty");
+    }
+  }, [setContent, setStatus]);
+
+  const handleRedo = useCallback(() => {
+    const undoManager = undoManagerRef.current;
+    const result = undoManager.redo();
+    const textarea = contentRef.current;
+    if (textarea) {
+      const startPos = result.selectionStart ?? 0;
+      const endPos = result.selectionEnd ?? 0;
+      textarea.value = undoManager.text;
+      textarea.focus();
+      textarea.setSelectionRange(startPos, endPos);
+      setContent(undoManager.text);
+      setStatus("dirty");
+    } else {
+      setContent(undoManager.text);
+      setStatus("dirty");
+    }
+  }, [setContent, setStatus]);
+
+  const markDirty = () => {
+    setStatus("dirty");
   };
 
   const isTile = surfaceMode === "tile";
@@ -508,6 +557,59 @@ export function NotePad({
           data-note-id={tileNoteId}
           onMouseDown={handleDrag}
         >
+          {errorMessage ? null : (
+            <textarea
+              ref={contentRef}
+              value={content}
+              onChange={(event) => {
+                setContent(event.target.value);
+                setStatus("dirty");
+                undoManagerRef.current.enabled = true;
+                undoManagerRef.current.addByValue(event.currentTarget.value);
+              }}
+              onKeyDown={(event) => {
+                const isMac = navigator.platform.toUpperCase().includes("MAC");
+                const ctrlOrCmd = isMac ? event.metaKey : event.ctrlKey;
+
+                if (event.key === "Tab" && !event.shiftKey) {
+                  event.preventDefault();
+                  if (contentRef.current) {
+                    handleIndent(contentRef.current, setContent, markDirty, undoManagerRef.current);
+                  }
+                } else if (event.key === "Tab" && event.shiftKey) {
+                  event.preventDefault();
+                  if (contentRef.current) {
+                    handleOutdent(
+                      contentRef.current,
+                      setContent,
+                      markDirty,
+                      undoManagerRef.current,
+                    );
+                  }
+                } else if (ctrlOrCmd && event.key.toLowerCase() === "z" && !event.shiftKey) {
+                  event.preventDefault();
+                  handleUndo();
+                } else if (
+                  ctrlOrCmd &&
+                  (event.key.toLowerCase() === "y" ||
+                    (event.shiftKey && event.key.toLowerCase() === "z"))
+                ) {
+                  event.preventDefault();
+                  handleRedo();
+                }
+              }}
+              onCompositionStart={() => {
+                undoManagerRef.current.enabled = false;
+              }}
+              onCompositionEnd={(event) => {
+                undoManagerRef.current.enabled = true;
+                undoManagerRef.current.addByValue(event.currentTarget.value);
+              }}
+              className="absolute inset-0 w-full h-full bg-transparent text-transparent caret-ink-soft p-4 pt-12 pb-4 resize-none outline-none"
+              style={{ fontSize: `${surfaceFontSize}px` }}
+              spellCheck={false}
+            />
+          )}
           <button
             type="button"
             aria-label="取消钉屏"
@@ -639,8 +741,13 @@ export function NotePad({
                   onChange={(event) => {
                     setContent(event.target.value);
                     setStatus("dirty");
+                    undoManagerRef.current.enabled = true;
+                    undoManagerRef.current.addByValue(event.currentTarget.value);
                   }}
                   onKeyDown={(event) => {
+                    const isMac = navigator.platform.toUpperCase().includes("MAC");
+                    const ctrlOrCmd = isMac ? event.metaKey : event.ctrlKey;
+
                     if (event.key === "ArrowUp") {
                       const ta = contentRef.current;
                       if (ta && ta.selectionStart === ta.selectionEnd) {
@@ -650,7 +757,49 @@ export function NotePad({
                           titleRef.current?.focus();
                         }
                       }
+                    } else if (event.key === "Tab" && !event.shiftKey) {
+                      // 缩进
+                      event.preventDefault();
+                      if (contentRef.current) {
+                        handleIndent(
+                          contentRef.current,
+                          setContent,
+                          markDirty,
+                          undoManagerRef.current,
+                        );
+                      }
+                    } else if (event.key === "Tab" && event.shiftKey) {
+                      // 取消缩进
+                      event.preventDefault();
+                      if (contentRef.current) {
+                        handleOutdent(
+                          contentRef.current,
+                          setContent,
+                          markDirty,
+                          undoManagerRef.current,
+                        );
+                      }
+                    } else if (ctrlOrCmd && event.key.toLowerCase() === "z" && !event.shiftKey) {
+                      // 撤销
+                      event.preventDefault();
+                      handleUndo();
+                    } else if (
+                      ctrlOrCmd &&
+                      (event.key.toLowerCase() === "y" ||
+                        (event.shiftKey && event.key.toLowerCase() === "z"))
+                    ) {
+                      // 重做
+                      event.preventDefault();
+                      handleRedo();
                     }
+                  }}
+                  onCompositionStart={() => {
+                    //针对输入法，防止输入拼音时触发记录，减少重复计算增量以及防止用户需要更多次的撤销。
+                    undoManagerRef.current.enabled = false;
+                  }}
+                  onCompositionEnd={(event) => {
+                    undoManagerRef.current.enabled = true;
+                    undoManagerRef.current.addByValue(event.currentTarget.value);
                   }}
                   placeholder={t("notepad.placeholder.content", { defaultValue: "写点什么……" })}
                   className="w-full flex-1 min-h-0 pb-2 leading-relaxed text-ink-soft font-body placeholder:text-ink-ghost/50"

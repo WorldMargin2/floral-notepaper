@@ -8,7 +8,7 @@ describe("TileShowcase", () => {
 
     expect(markup).toContain('aria-label="取消钉屏"');
     expect(markup).not.toContain("<input");
-    expect(markup).not.toContain("<textarea");
+    expect(markup).toContain("<textarea");
     expect(markup).not.toContain(">保存<");
   });
 

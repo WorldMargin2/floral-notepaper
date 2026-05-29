@@ -15,6 +15,7 @@ import { normalizeTileColor } from "../features/settings/tileColor";
 import { SettingsPanel } from "./SettingsPanel";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 import { UndoManager } from "./Undo";
+import { indentLine, outdentLine, indentText, outdentText } from "./indent";
 import {
   createNote,
   createCategory,
@@ -87,48 +88,6 @@ type FormatAction =
   | "quote"
   | "inlineMath"
   | "blockMath";
-
-interface indentResult {
-  result: string;
-  firstLineIdentBlankCount: number;
-}
-
-function indentText(lines: string[], indent: string): indentResult {
-  let firstLineIdentBlankCount = indentLine(lines[0], indent).length - lines[0].length;
-  return {
-    result: lines.map((line) => indentLine(line, indent)).join("\n"),
-    firstLineIdentBlankCount,
-  };
-}
-
-function indentLine(line: string, indent: string) {
-  let blankCount = 0;
-  for (let i = 0; i < line.length; i++) {
-    if (line[i] == " ") {
-      blankCount++;
-    } else {
-      break;
-    }
-  }
-  let nowLevel = blankCount / indent.length;
-  return indent.repeat(nowLevel + 1) + line.slice(blankCount);
-}
-
-function outdentText(lines: string[], indent: string): indentResult {
-  let firstLineIdentBlankCount = outdentLine(lines[0], indent).length - lines[0].length;
-  return {
-    result: lines.map((line) => outdentLine(line, indent)).join("\n"),
-    firstLineIdentBlankCount,
-  };
-}
-
-function outdentLine(line: string, indent: string) {
-  let nowLevel = line.indexOf(indent);
-  if (nowLevel == -1) {
-    return line;
-  }
-  return line.slice(nowLevel + indent.length);
-}
 
 function applyFormat(
   textarea: HTMLTextAreaElement,
@@ -306,13 +265,13 @@ function applyFormat(
         let tmp_result = indentText(selected.split("\n"), indent);
         let tmp_selected = tmp_result.result;
         result = before + tmp_selected + after;
-        cursorStart = start + tmp_result.firstLineIdentBlankCount;
-        cursorEnd = cursorStart + tmp_selected.length - tmp_result.firstLineIdentBlankCount;
+        cursorStart = start + tmp_result.firstLineIndentBlankCount;
+        cursorEnd = cursorStart + tmp_selected.length - tmp_result.firstLineIndentBlankCount;
       } else {
         let tmp_lines = selected.split("\n");
         tmp_lines[0] = currentLine + tmp_lines[0];
         let tmp_indent = indentText(tmp_lines, indent);
-        let indentBlankCount = tmp_indent.firstLineIdentBlankCount;
+        let indentBlankCount = tmp_indent.firstLineIndentBlankCount;
         let tmp_selected = tmp_indent.result;
         result = before.slice(0, lineStart) + tmp_selected + after;
         cursorStart = start + indentBlankCount;
@@ -340,13 +299,13 @@ function applyFormat(
         let tmp_result = outdentText(selected.split("\n"), indent);
         let tmp_selected = tmp_result.result;
         result = before + tmp_selected + after;
-        cursorStart = start + tmp_result.firstLineIdentBlankCount;
-        cursorEnd = cursorStart + tmp_selected.length - tmp_result.firstLineIdentBlankCount;
+        cursorStart = start + tmp_result.firstLineIndentBlankCount;
+        cursorEnd = cursorStart + tmp_selected.length - tmp_result.firstLineIndentBlankCount;
       } else {
         let tmp_lines = selected.split("\n");
         tmp_lines[0] = currentLine + tmp_lines[0];
         let tmp_outdent = outdentText(tmp_lines, indent);
-        let outdentBlankCount = tmp_outdent.firstLineIdentBlankCount;
+        let outdentBlankCount = tmp_outdent.firstLineIndentBlankCount;
         let tmp_selected = tmp_outdent.result;
         result = before.slice(0, lineStart) + tmp_selected + after;
         cursorStart = start + outdentBlankCount;
