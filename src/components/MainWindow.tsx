@@ -12,6 +12,7 @@ import {
 } from "../features/settings/api";
 import type { AppConfig, ViewMode } from "../features/settings/types";
 import { normalizeTileColor } from "../features/settings/tileColor";
+import { BackgroundLayer } from "./BackgroundLayer";
 import { SettingsPanel } from "./SettingsPanel";
 import { SlidingButtonGroup } from "./SlidingButtonGroup";
 import { UndoManager } from "./Undo";
@@ -47,7 +48,7 @@ import {
   getNoteContextMenuItems,
   type NoteContextMenuAction,
 } from "../features/notes/noteContextMenu";
-import { openNotepadWindow, toggleTileWindow } from "../features/windows/api";
+import { openNotepadWindow, takeStartupFile, toggleTileWindow } from "../features/windows/api";
 import {
   closeCurrentWindow,
   minimizeCurrentWindow,
@@ -388,6 +389,7 @@ export function MainWindow({
   const [renamingCategory, setRenamingCategory] = useState<string | null>(null);
   const [renameCategoryValue, setRenameCategoryValue] = useState("");
   const [dragOverCategory, setDragOverCategory] = useState<string | null>(null);
+  const [settingsOverlay, setSettingsOverlay] = useState(() => window.innerWidth < 1080);
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [splitRatio, setSplitRatio] = useState(0.5);
@@ -639,6 +641,13 @@ export function MainWindow({
         } else {
           clearCurrentNote();
         }
+
+        if (!cancelled) {
+          const startupFile = await takeStartupFile();
+          if (!cancelled && startupFile) {
+            await loadExternalFile(startupFile);
+          }
+        }
       } catch (error) {
         if (!cancelled) setErrorMessage(getErrorMessage(error));
       } finally {
@@ -690,6 +699,12 @@ export function MainWindow({
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [refreshNotes]);
+
+  useEffect(() => {
+    const onResize = () => setSettingsOverlay(window.innerWidth < 1080);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     const unlisten = listen<string>("open-external-file", (event) => {
@@ -1377,9 +1392,10 @@ export function MainWindow({
 
   return (
     <div className="w-full h-screen flex flex-col">
-      <div className="noise-bg bg-cloud overflow-hidden flex flex-col flex-1">
+      <div className="relative noise-bg bg-cloud overflow-hidden flex flex-col flex-1">
+        <BackgroundLayer config={settingsConfig} />
         <div
-          className="flex items-center justify-between pl-5 pr-0 h-11 bg-paper/60 border-b border-paper-deep/30 shrink-0 select-none cursor-default"
+          className="relative z-10 flex items-center justify-between pl-5 pr-0 h-11 bg-paper/55 backdrop-blur-[1px] border-b border-paper-deep/30 shrink-0 select-none cursor-default"
           onMouseDown={handleTitleBarDrag}
           onDoubleClick={handleTitleBarDoubleClick}
         >
@@ -1504,7 +1520,7 @@ export function MainWindow({
           </div>
         </div>
 
-        <div className="flex flex-1 min-h-0">
+        <div className="relative z-10 flex flex-1 min-h-0">
           <div
             className={`border-r border-paper-deep/30 bg-paper/40 flex flex-col shrink-0 ${
               sidebarCollapsed ? "w-0 overflow-hidden transition-all duration-[600ms]" : ""
@@ -2309,6 +2325,7 @@ export function MainWindow({
                       <div className="flex-1 overflow-hidden px-5 pb-4">
                         <textarea
                           ref={contentRef}
+                          data-tab-indent="true"
                           value={content}
                           onBeforeInput={handleBeforeInput}
                           onChange={(event) => {
@@ -2357,7 +2374,10 @@ export function MainWindow({
                             }
                           }}
                           className="w-full h-full leading-[1.9] text-ink-soft font-body placeholder:text-ink-ghost/40"
-                          style={{ fontSize: `${settingsConfig?.fontSize ?? 14}px` }}
+                          style={{
+                            fontSize: `${settingsConfig?.fontSize ?? 14}px`,
+                            tabSize: `var(--tab-indent-size, 2)`,
+                          }}
                           placeholder={t("main.editor.contentPlaceholder", {
                             defaultValue: "开始写作……",
                           })}
@@ -2405,6 +2425,7 @@ export function MainWindow({
                         <MarkdownPreview
                           content={content}
                           fontSize={settingsConfig?.fontSize ?? 14}
+                          renderHtml={settingsConfig?.renderHtmlMarkdown ?? false}
                         />
                       </div>
                     </div>
@@ -2437,10 +2458,15 @@ export function MainWindow({
               </div>
             </div>
           </div>
+          {settingsConfig && settingsOpen && settingsOverlay && (
+            <div className="absolute inset-0 z-20" onClick={handleCloseSettings} />
+          )}
           {settingsConfig && (
             <div
-              className={`relative shrink-0 transition-all duration-[600ms] overflow-hidden h-full ${
-                settingsOpen ? "w-[360px]" : "w-0"
+              className={`transition-all duration-[600ms] overflow-hidden h-full ${
+                settingsOverlay
+                  ? `absolute right-0 top-0 bottom-0 z-30 ${settingsOpen ? "w-[360px] shadow-xl" : "w-0"}`
+                  : `relative shrink-0 ${settingsOpen ? "w-[360px]" : "w-0"}`
               }`}
             >
               <div className="w-[360px] h-full">
